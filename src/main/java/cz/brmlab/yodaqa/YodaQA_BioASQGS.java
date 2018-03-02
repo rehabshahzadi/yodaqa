@@ -17,20 +17,20 @@ public class YodaQA_BioASQGS {
 		if (args.length != 2) {
 			System.err.println("Usage: YodaQA_GS INPUT.JSON OUTPUT.TSV");
 			System.err.println("Measures YodaQA performance on some BioASQ Gold Standard (or not) questions.");
-			System.exit(1);
+			//System.exit(1);
 		}
 
 		CollectionReaderDescription reader = createReaderDescription(
 				BioASQQuestionReader.class,
-				BioASQQuestionReader.PARAM_JSONFILE, args[0],
+			//	BioASQQuestionReader.PARAM_JSONFILE,  "/home/wasim/Rehab/projects/yodaqa-d-clef15-bioasq/resources/gold/BioASQ-task3bPhaseB-testset3",
+				BioASQQuestionReader.PARAM_JSONFILE,  "/home/wasim/Rehab/projects/biaasq/CRF/yodaqa/resources/gold/test",
 				BioASQQuestionReader.PARAM_LANGUAGE, "en");
 
 		AnalysisEngineDescription pipeline = YodaQA.createEngineDescription();
-
 		AnalysisEngineDescription printer = createEngineDescription(
 				GoldStandardAnswerPrinter.class,
-				GoldStandardAnswerPrinter.PARAM_TSVFILE, args[1]);
-
+			GoldStandardAnswerPrinter.PARAM_TSVFILE, "/home/wasim/Rehab/projects/biaasq/CRF/yodaqa/resources/gold/test");
+		      // GoldStandardAnswerPrinter.PARAM_TSVFILE, "/home/wasim/Rehab/projects/yodaqa-d-clef15-bioasq/resources/gold/BioASQ-task3bPhaseB-testset3");
 		/* XXX: Later, we will want to create an actual flow
 		 * to support scaleout. */
 		MultiCASPipeline.runPipeline(reader,

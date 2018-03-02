@@ -1,9 +1,12 @@
 package cz.brmlab.yodaqa.io.bioasq;
 
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.lang.Math;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedList;
 
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
@@ -17,6 +20,9 @@ import org.apache.uima.fit.util.JCasUtil;
 import org.apache.uima.jcas.JCas;
 import org.apache.uima.jcas.cas.StringArray;
 import org.apache.uima.resource.ResourceInitializationException;
+import org.json.simple.JSONArray;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
 
 import cz.brmlab.yodaqa.flow.dashboard.Question;
 import cz.brmlab.yodaqa.flow.dashboard.QuestionDashboard;
@@ -25,19 +31,17 @@ import cz.brmlab.yodaqa.model.Question.GSAnswer;
 import cz.brmlab.yodaqa.model.Question.QuestionInfo;
 
 /**
- * A consumer that displays the top answers in context of the asked
- * question and expected true answer provided as gold standard.
+ * A consumer that displays the top answers in context of the asked question and
+ * expected true answer provided as gold standard.
  *
- * Pair this with BioASQQuestionReader.  Note that this *IS NOT*
- * JSON output expected by BioASQ submission system; that will be
- * done by postprocessing.
+ * Pair this with BioASQQuestionReader. Note that this *IS NOT* JSON output
+ * expected by BioASQ submission system; that will be done by postprocessing.
  *
- * The output format is, tab separated
- * 	ID TIME QUESTION SCORE RANK NRANKS ANSWERPATTERN CORRECTANSWER TOPANSWERS...
- * where TIME is the processing time in seconds (fractional),
- * SCORE is (1.0 - log(correctrank)/log(#answers)), RANK is
- * the corretrank and NRANKS is #answers. ANSWERPATTERN is
- * the *first* of the specified correct answers.
+ * The output format is, tab separated ID TIME QUESTION SCORE RANK NRANKS
+ * ANSWERPATTERN CORRECTANSWER TOPANSWERS... where TIME is the processing time
+ * in seconds (fractional), SCORE is (1.0 - log(correctrank)/log(#answers)),
+ * RANK is the corretrank and NRANKS is #answers. ANSWERPATTERN is the *first*
+ * of the specified correct answers.
  *
  * XXX how to represent list-type answers?
  */
@@ -47,7 +51,7 @@ public class GoldStandardAnswerPrinter extends JCasConsumer_ImplBase {
 	 * Number of top answers to show.
 	 */
 	public static final String PARAM_TOPLISTLEN = "TOPLISTLEN";
-	@ConfigurationParameter(name = PARAM_TOPLISTLEN, mandatory = false, defaultValue = "15")
+	@ConfigurationParameter(name = PARAM_TOPLISTLEN, mandatory = false, defaultValue = "2")
 	private int topListLen;
 
 	/**
@@ -58,45 +62,22 @@ public class GoldStandardAnswerPrinter extends JCasConsumer_ImplBase {
 	private String TSVFile;
 	PrintWriter TSVOutput;
 
+	JSONArray results = new JSONArray();
+	LinkedList<JSONObject> questions = new LinkedList<>();
 
-	public void initialize(UimaContext context)
-			throws ResourceInitializationException {
+	public void initialize(UimaContext context) throws ResourceInitializationException {
 		super.initialize(context);
 
+		JSONParser parser = new JSONParser();
+		JSONObject data;
 		try {
-			TSVOutput = new PrintWriter(TSVFile);
-		} catch (IOException io) {
+			data = (JSONObject) parser.parse(new FileReader(TSVFile));
+		} catch (Exception io) {
 			throw new ResourceInitializationException(io);
 		}
-	}
-
-	protected void output(QuestionInfo qi, double procTime,
-			GSAnswer goodAnswer,
-			double score, int rank, int nranks,
-			String aMatch, String... toplist)
-	{
-		String[] columns = new String[] {
-			qi.getQuestionId(), Double.toString(procTime),
-			qi.getQuestionText(),
-			Double.toString(score),
-			Integer.toString(rank), Integer.toString(nranks),
-			goodAnswer == null || goodAnswer.getTexts() == null || goodAnswer.getTexts().size() == 0 ? "_"
-				: goodAnswer.getTexts().get(0),
-			aMatch,
-			Integer.toString(qi.getPassE_scored()),
-			Integer.toString(qi.getPassE_gsscored()),
-			Integer.toString(qi.getPassE_picked()),
-			Integer.toString(qi.getPassE_gspicked()),
-		};
-		columns = (String[]) ArrayUtils.addAll(columns, toplist);
-
-		String output = StringUtils.join(columns, "\t");
-		/* Make sure no newlines were in the questions. */
-		output = output.replace("\n", " ");
-
-		System.out.println(output);
-		TSVOutput.println(output);
-		TSVOutput.flush();
+		for (Object o : (JSONArray) data.get("questions")) {
+			questions.add((JSONObject) o);
+		}
 	}
 
 	public static boolean isCorrectAnswer(String text, Collection<GSAnswer> gs) {
@@ -112,59 +93,84 @@ public class GoldStandardAnswerPrinter extends JCasConsumer_ImplBase {
 	}
 
 	public void process(JCas jcas) throws AnalysisEngineProcessException {
-		JCas questionView, answerHitlist;
+		JCas answerHitlist;
 		try {
-			questionView = jcas.getView("Question");
 			answerHitlist = jcas.getView("AnswerHitlist");
 		} catch (Exception e) {
 			throw new AnalysisEngineProcessException(e);
 		}
-
-		QuestionInfo qi = JCasUtil.selectSingle(questionView, QuestionInfo.class);
-		double procTime = (System.currentTimeMillis() - qi.getProcBeginTime()) / 1000.0;
-
 		FSIndex idx = answerHitlist.getJFSIndexRepository().getIndex("SortedAnswers");
 		FSIterator answers = idx.iterator();
+		JSONObject question = questions.remove();
+		ArrayList<String> toplist = new ArrayList();
 		if (answers.hasNext()) {
-			String[] toplist = new String[topListLen];
-			int match = -1;
-			String matchText = ".";
 
 			int i = 0;
 			while (answers.hasNext()) {
 				Answer answer = (Answer) answers.next();
 				String text = answer.getText();
+
 				if (i < topListLen) {
-					toplist[i] = text + ":" + answer.getConfidence();
+					toplist.add(text);
+					i++;
 				}
-				// FIXME incorrect for list-based
-				if (match < 0) {
-					if (isCorrectAnswer(text, JCasUtil.select(questionView, GSAnswer.class))) {
-						match = i;
-						matchText = text;
-					}
-				}
-				i++;
 			}
+			JSONObject questionResult = getQuestionResult(question, toplist);
+			results.add(questionResult);
+			BioASQFileWriter.writeSubmissionFile(results, "test");
+		}
+		
 
-			double score = 0.0;
-			//if (match >= 0)
-			//	score = 1.0 - Math.log(1 + match) / Math.log(1 + i);
+	}
 
-			GSAnswer goodAnswer = null;
-			for (GSAnswer a : JCasUtil.select(questionView, GSAnswer.class)) {
-				goodAnswer = a;
-				break;
+	private JSONObject getQuestionResult(JSONObject question, ArrayList<String> answers) {
+		JSONObject questionResult = null;
+		ArrayList<JSONObject> sData = new ArrayList();
+		 ArrayList<ArrayList<String>> temp = new ArrayList<ArrayList<String>>();
+	
+		for (Object s : (JSONArray) question.get("snippets")) {
+			sData.add((JSONObject) s);
+		}
+		
+	    Object dData=(JSONArray)question.get("documents");
+		
+
+		questionResult = new JSONObject();
+		
+		String questionBody = (String) question.get("body");
+		String questionId = (String) question.get("id");
+		String questionType = (String) question.get("type");
+		questionResult.put("id", questionId);
+		questionResult.put("type", questionType);
+		questionResult.put("body", questionBody);
+		questionResult.put("snippets", sData);
+		questionResult.put("documents", dData);
+		if (questionType.toLowerCase().equals("yesno")) {
+			questionResult.put("ideal_answer", "yes");
+			questionResult.put("exact_answer", "yes");
+
+		}
+		if (questionType.toLowerCase().equals("summary")) {
+			// used bm25 for sentence similarity
+
+			questionResult.put("ideal_answer", answers.get(0));
+		}
+		if (questionType.toLowerCase().equals("factoid") | questionType.toLowerCase().equals("list")) 
+		{
+
+			for(String s: answers)
+			{	ArrayList<String> idealData = new ArrayList();
+				idealData.add(s);
+				temp.add(idealData);
 			}
-			output(qi, procTime, goodAnswer, score, match, i, matchText, toplist);
+			questionResult.put("ideal_answer", answers.get(0));
+			
+            questionResult.put("exact_answer", temp);
 
-		} else {
-			/* Special case, no answer found. */
-			output(qi, procTime, null, 0.0, 0, 0, ".");
 		}
 
-		Question q = QuestionDashboard.getInstance().get(qi.getQuestionId());
-		// q.setAnswers(answers); XXX
-		QuestionDashboard.getInstance().finishQuestion(q);
+		return questionResult;
+
 	}
+
 }
