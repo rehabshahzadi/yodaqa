@@ -49,6 +49,7 @@ public class YodaQA /* XXX: extends AggregateBuilder ? */ {
 
 			//SolrNamedSource.register("guten", "data/guten", null);
 			//SolrNamedSource.register("enwiki", "collection1", "http://pasky.or.cz:8983/solr/");
+			SolrNamedSource.register("enwiki", "collection1", "http://localhost:8983/solr/");
 		} catch (Exception e) {
 			e.printStackTrace();
 			System.err.println("*** Exception caught during SolrNamedSource initialization. ***");
